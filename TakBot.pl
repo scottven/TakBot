@@ -2,10 +2,14 @@
 use warnings FATAL => qw(all);
 use strict;
 
+# Longer-term FIXME: handle waiting and reconnecting to the
+#                    playtak server if it goes down
 use IO::Select;
 use IO::Socket::INET;
 use Getopt::Long;
 
+# FIXME: get this from the command line
+#        but the password from a file.
 my $playtak_passwd = "";
 my $playtak_user   = "TakBot";
 my $playtak_host   = "playtak.com";
@@ -66,21 +70,21 @@ sub dispatch_control($$) {
 		#nop for control
 	} elsif($line =~ m/^Online/) {
 		#nop for control
-	} elsif($line =~ m/^Seek new (\d+) ($user_re)/) {
+	} elsif($line =~ m/^Seek new (\d+) ($user_re)/o) {
 		# map user to seek number
 		$seek_table{$2} = $1;
-	} elsif($line =~ m/^Seek remove (\d+) ($user_re)/) {
+	} elsif($line =~ m/^Seek remove (\d+) ($user_re)/o) {
 		delete $seek_table{$2}
 	} elsif($line =~ m/^Game/) {
 		#nop for control
-	} elsif($line =~ m/^Shout(?: <IRC>)? <($user_re)> (.*)/) {
+	} elsif($line =~ m/^Shout(?: <IRC>)? <($user_re)> (.*)/o) {
 		parse_shout($sock, $1, $2);
 	} elsif($line =~ m/^OK/) {
 		#nop for control
 	} elsif($line =~ m/^NOK/) {
 		warn "NOK from $last_line{$sock}";
 	} elsif($line =~ m/^Message /) {
-		die $line;
+		warn $line;
 	} elsif($line =~ m/^Error /) {
 		warn "Error from $last_line{$sock}";
 	} else {
@@ -107,8 +111,7 @@ sub open_connection($) {
 					Proto    => 'tcp');
 	$sock->blocking(undef);
 	$selector->add($sock);
-
-	return $sock; #not sure if this is needed or not
+	return $sock;
 }
 
 sub get_line($) {
