@@ -21,7 +21,7 @@ my $user_re = '[a-zA-Z][a-zA-Z0-9_]{3,15}';
 
 my $ai_base_url = 'http://takservice.azurewebsites.net/TakMoveService.svc/GetMove?';
 
-sub open_connection($$);
+sub open_connection($$;$);
 sub drop_connection($);
 sub get_line($);
 sub send_line($$);
@@ -40,8 +40,10 @@ my $selector = IO::Select->new();
 my %seek_table;
 
 my $debug;
+my $fork;
 GetOptions('debug=s' => \$debug,
            'password=s' => \$playtak_passwd,
+	   'fork' => \$fork,
 	  );
 if(!defined $playtak_passwd) {
 	die 'password is required';
@@ -49,13 +51,13 @@ if(!defined $playtak_passwd) {
 my $debug_wire;
 my $debug_ptn;
 my $debug_ai;
-if(defined $debug && ($debug =~ m/wire/ || $debug eq 'all' || $debug == 1)) {
+if(defined $debug && ($debug =~ m/wire/ || $debug eq 'all' || $debug eq '1')) {
 	$debug_wire = 1;
 }
-if(defined $debug && ($debug =~ m/ptn/  || $debug eq 'all' || $debug == 1)) {
+if(defined $debug && ($debug =~ m/ptn/  || $debug eq 'all' || $debug eq '1')) {
 	$debug_ptn = 1;
 }
-if(defined $debug && ($debug =~ m/ai/  || $debug eq 'all' || $debug == 1)) {
+if(defined $debug && ($debug =~ m/ai/  || $debug eq 'all' || $debug eq '1')) {
 	$debug_ai = 1;
 }
 open_connection($selector, 'control');
@@ -63,6 +65,11 @@ open_connection($selector, 'control');
 my %letter_values = ( a => 1, b => 2, c => 3, d => 4,
                e => 5, f => 6, g => 7, h => 8 );
 my @letters = ( '', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h');
+
+# don't want to leave zombies
+if($fork) {
+	$SIG{CHLD} = 'IGNORE';
+}
 
 #wait loop
 #FIXME: This doesn't handle sending Pings.
@@ -176,7 +183,7 @@ sub parse_shout($$$) {
 		#send_line($sock, "Shout Hi, $user!  I'm looking for your game now\n");
 		if(exists $seek_table{$user}) {
 			send_line($sock, "Shout $user: OK, joining your game.\n");
-			open_connection($selector, $seek_table{$user});
+			open_connection($selector, $seek_table{$user}, $sock);
 		} else {
 			send_line($sock, "Shout $user: Sorry, I don't see a game to join from you.  Please create a game first.\n");
 		}
@@ -185,9 +192,22 @@ sub parse_shout($$$) {
 }
 
 
-sub open_connection($$) {
+sub open_connection($$;$) {
 	my $selector = shift;
 	my $name = shift;
+	my $control_sock = shift;
+
+	if($fork && $name ne 'control') {
+		my $pid = fork();
+		if(!defined $pid) {
+			die "fork failed: $!";
+		} elsif($pid == 0) {
+			$control_sock->close();
+		} else {
+			#parent
+			return;
+		}
+	}
 
 	my $sock = new TakBot::Socket(PeerHost => $playtak_host,
 	                              PeerPort => $playtak_port,
@@ -202,6 +222,9 @@ sub drop_connection($) {
 	my $sock = shift;
 	$selector->remove($sock);
 	$sock->close();
+	if($fork) {
+		exit 0;
+	}
 }
 
 sub get_line($) {
