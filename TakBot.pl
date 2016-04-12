@@ -376,15 +376,20 @@ sub playtak_to_ptn($) {
 
 sub get_move_from_ai($) {
 	my $sock = shift;
+	my $game_no = $sock->name();
 	my $query = $ai_base_url . "code=" . uri_escape($sock->ptn());
 	print "Query: $query\n" if $debug_ai;
 	my $ret = get($query);
+	if(!defined $ret) {
+		send_line($sock, "Shout Sorry, the AI encountered an error.  I surrender.\n");
+		send_line($sock, "Game#$game_no Resign\n");
+		return;
+	}
 	print "Returned $ret\n" if $debug_ai;
 	my $move = decode_json($ret)->{d};
 	print "Move is $move\n" if $debug_ai;
 	add_move($sock, $move);
 	$move = ptn_to_playtak($move);
-	my $game_no = $sock->name();
 	send_line($sock, "Game#$game_no $move\n");
 }
 
