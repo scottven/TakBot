@@ -179,7 +179,7 @@ sub parse_shout($$$) {
 	my $user = shift;
 	my $line = shift;
 
-	if($line =~ m/^TakBot: play/) {
+	if($line =~ m/^[Tt]ak[Bb]ot: play/) {
 		#send_line($sock, "Shout Hi, $user!  I'm looking for your game now\n");
 		if(exists $seek_table{$user}) {
 			send_line($sock, "Shout $user: OK, joining your game.\n");
