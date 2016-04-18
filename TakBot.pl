@@ -19,7 +19,7 @@ my $playtak_host   = "playtak.com";
 my $playtak_port   = 10000;
 my $user_re = '[a-zA-Z][a-zA-Z0-9_]{3,15}';
 
-my $ai_base_url = 'http://takservice.azurewebsites.net/TakMoveService.svc/GetMove?';
+my $ai_base_url = 'http://192.168.100.154:8084/TakService/TakMoveService.svc/GetMove?';
 
 sub open_connection($$;$);
 sub drop_connection($);
@@ -402,7 +402,7 @@ sub add_move($$) {
 	chomp $last_line;
 	$last_line =~ s/.*\n//s;
 	print "last line: $last_line" if $debug_ptn;
-	if($last_line =~ m/^\s*([0-9]+)\.\s+([1-8a-h<>+-]+)\s([1-8a-h><+-]+)?/) {
+	if($last_line =~ m/^\s*([0-9]+)\.\s+([SC1-8a-h<>+-]+)\s([SC1-8a-h><+-]+)?/) {
 		my $turn = $1;
 		my $white_move = $2;
 		my $black_move = $3;
