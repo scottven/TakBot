@@ -18,10 +18,11 @@ my $playtak_user   = "TakBot";
 my $playtak_host   = "playtak.com";
 my $playtak_port   = 10000;
 my $user_re = '[a-zA-Z][a-zA-Z0-9_]{3,15}';
+my $owner_name = 'scottven';
 
 my $ai_base_url = 'http://192.168.100.154:8084/TakService/TakMoveService.svc/GetMove?';
 
-sub open_connection($$;$);
+sub open_connection($;$);
 sub drop_connection($);
 sub get_line($);
 sub send_line($$);
@@ -60,7 +61,7 @@ if(defined $debug && ($debug =~ m/ptn/  || $debug eq 'all' || $debug eq '1')) {
 if(defined $debug && ($debug =~ m/ai/  || $debug eq 'all' || $debug eq '1')) {
 	$debug_ai = 1;
 }
-open_connection($selector, 'control');
+open_connection('control');
 
 my %letter_values = ( a => 1, b => 2, c => 3, d => 4,
                e => 5, f => 6, g => 7, h => 8 );
@@ -179,21 +180,26 @@ sub parse_shout($$$) {
 	my $user = shift;
 	my $line = shift;
 
-	if($line =~ m/^[Tt]ak[Bb]ot: play/) {
+	if($user eq $owner_name && $line =~ m/^[Tt]ak[Bb]ot: play ($user_re)/o) {
+		if(exists $seek_table{$1}) {
+			send_line($sock, "Shout $user: OK, joining $1's game.\n");
+			open_connection($seek_table{$1}, $sock);
+		} else {
+			send_line($sock, "Shout $user: Sorry, I don't see a game from $1.\n");
+		}
+	} elsif($line =~ m/^[Tt]ak[Bb]ot: play/) {
 		#send_line($sock, "Shout Hi, $user!  I'm looking for your game now\n");
 		if(exists $seek_table{$user}) {
 			send_line($sock, "Shout $user: OK, joining your game.\n");
-			open_connection($selector, $seek_table{$user}, $sock);
+			open_connection($seek_table{$user}, $sock);
 		} else {
 			send_line($sock, "Shout $user: Sorry, I don't see a game to join from you.  Please create a game first.\n");
 		}
 	}
-	#fall through
 }
 
 
-sub open_connection($$;$) {
-	my $selector = shift;
+sub open_connection($;$) {
 	my $name = shift;
 	my $control_sock = shift;
 
