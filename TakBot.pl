@@ -40,6 +40,7 @@ my $selector = IO::Select->new();
 # map of users to their outstanding "Seeks"
 my %seek_table;
 
+my @orig_command_line = ($0, @ARGV);
 my $debug;
 my $fork;
 GetOptions('debug=s' => \$debug,
@@ -187,6 +188,9 @@ sub parse_shout($$$) {
 		} else {
 			send_line($sock, "Shout $user: Sorry, I don't see a game from $1.\n");
 		}
+	} elsif($user eq $owner_name && $line =~ m/^TakBot: reboot$/) {
+		send_line($sock, "Shout $user: Aye, aye.  Brb!\n");
+		exec { $orig_command_line[0] }  @orig_command_line;
 	} elsif($line =~ m/^[Tt]ak[Bb]ot: play/) {
 		#send_line($sock, "Shout Hi, $user!  I'm looking for your game now\n");
 		if(exists $seek_table{$user}) {
