@@ -25,7 +25,7 @@ my @known_ais = ('rtak', 'george', 'flatimir');
 my $default_ai = 'rtak';
 my $rtak_ai_base_url = 'http://192.168.100.154:8084/TakService/TakMoveService.svc/GetMove?';
 my $torch_ai_path = '/home/takbot/tak-ai';
-my $color_enabled = 0;
+my $color_enabled = 1;
 
 sub open_connection($;$$);
 sub drop_connection($);
@@ -164,6 +164,9 @@ sub dispatch_game($$) {
 	} elsif($line =~ m/^Game#$game_no OfferDraw/) {
 		#accept all offers for draws
 		send_line($sock, "Game#$game_no OfferDraw\n");
+		if($color_enabled && $sock->ai() eq 'george') {
+			send_line($sock, "Shout A tied game... Oh myyyy.\n");
+		}
 	} elsif($line =~ m/^Online/) {
 		#nop for game
 	} elsif($line =~ m/^Seek new (\d+) ($user_re)/o) {
