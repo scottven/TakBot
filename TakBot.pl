@@ -10,6 +10,7 @@ use LWP::Simple;
 use URI::Escape;
 use JSON;
 use Carp::Always;
+use IPC::Open2;
 
 # FIXME: get this from the command line
 #        but the password from a file.
@@ -20,15 +21,20 @@ my $playtak_port   = 10000;
 my $user_re = '[a-zA-Z][a-zA-Z0-9_]{3,15}';
 my $owner_name = 'scottven';
 
-my $ai_base_url = 'http://192.168.100.154:8084/TakService/TakMoveService.svc/GetMove?';
+my @known_ais = ('rtak', 'george', 'flatimir');
+my $default_ai = 'rtak';
+my $rtak_ai_base_url = 'http://192.168.100.154:8084/TakService/TakMoveService.svc/GetMove?';
+my $torch_ai_path = '/home/takbot/tak-ai';
+my $color_enabled = 0;
 
-sub open_connection($;$);
+sub open_connection($;$$);
 sub drop_connection($);
 sub get_line($);
 sub send_line($$);
 sub dispatch_control($$);
 sub dispatch_game($$);
-sub parse_shout($$$);
+sub parse_control_shout($$$);
+sub parse_game_shout($$$);
 sub ptn_to_playtak($);
 sub playtak_to_ptn($);
 sub get_move_from_ai($);
@@ -53,6 +59,8 @@ if(!defined $playtak_passwd) {
 my $debug_wire;
 my $debug_ptn;
 my $debug_ai;
+my $debug_torch;
+my $debug_rtak;
 if(defined $debug && ($debug =~ m/wire/ || $debug eq 'all' || $debug eq '1')) {
 	$debug_wire = 1;
 }
@@ -61,12 +69,22 @@ if(defined $debug && ($debug =~ m/ptn/  || $debug eq 'all' || $debug eq '1')) {
 }
 if(defined $debug && ($debug =~ m/ai/  || $debug eq 'all' || $debug eq '1')) {
 	$debug_ai = 1;
+	$debug_torch = 1;
+	$debug_rtak = 1;
+}
+if(defined $debug && ($debug =~ m/torch/)) {
+	$debug_torch = 1;
+}
+if(defined $debug && ($debug =~ m/rtak/)) {
+	$debug_torch = 1;
 }
 open_connection('control');
 
 my %letter_values = ( a => 1, b => 2, c => 3, d => 4,
                e => 5, f => 6, g => 7, h => 8 );
 my @letters = ( '', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h');
+
+my $ai_name_re = join('|', @known_ais);
 
 # don't want to leave zombies
 if($fork) {
@@ -110,7 +128,7 @@ sub dispatch_control($$) {
 	} elsif($line =~ m/^Game/) {
 		#nop for control
 	} elsif($line =~ m/^Shout(?: <IRC>)? <($user_re)> (.*)/o) {
-		parse_shout($sock, $1, $2);
+		parse_control_shout($sock, $1, $2);
 	} elsif($line =~ m/^OK/) {
 		#nop for control
 	} elsif($line =~ m/^NOK/) {
@@ -156,13 +174,13 @@ sub dispatch_game($$) {
 		#nop for game
 	} elsif($line =~ m/^Game Start ([0-9]+) ([0-9]+) $user_re vs $user_re (white|black)/) {
 		$sock->name($1);
-		$sock->ptn("[Size \"$2x$2\"]\n");
+		$sock->ptn("[Size \"$2\"]\n");
 		if($3 eq 'white') {
 			get_move_from_ai($sock);
 		}
 	} elsif($line =~ m/^Shout(?: <IRC>)? <($user_re)> (.*)/o) {
-		#I think this is nop for game too...
-		#parse_shout($sock, $1, $2);
+		# use this to change AI settings
+		parse_game_shout($sock, $1, $2);
 	} elsif($line =~ m/^OK/) {
 		#nop for game
 	} elsif($line =~ m/^NOK/) {
@@ -176,36 +194,53 @@ sub dispatch_game($$) {
 	}
 }
 
-sub parse_shout($$$) {
+sub parse_game_shout($$$) {
 	my $sock = shift;
 	my $user = shift;
 	my $line = shift;
 
-	if($user eq $owner_name && $line =~ m/^[Tt]ak[Bb]ot: play ($user_re)/o) {
+	if($line =~ m/^takbot:\s*ai\s*($ai_name_re)/oi) {
+		$sock->ai($1);
+	}
+}
+
+sub parse_control_shout($$$) {
+	my $sock = shift;
+	my $user = shift;
+	my $line = shift;
+
+	if($user eq $owner_name && $line =~ m/^[Tt]ak[Bb]ot: fight ($user_re)\s*($ai_name_re)?/o) {
 		if(exists $seek_table{$1}) {
 			send_line($sock, "Shout $user: OK, joining $1's game.\n");
-			open_connection($seek_table{$1}, $sock);
+			open_connection($seek_table{$1}, $sock, $2);
 		} else {
 			send_line($sock, "Shout $user: Sorry, I don't see a game from $1.\n");
 		}
 	} elsif($user eq $owner_name && $line =~ m/^TakBot: reboot$/) {
 		send_line($sock, "Shout $user: Aye, aye.  Brb!\n");
 		exec { $orig_command_line[0] }  @orig_command_line;
-	} elsif($line =~ m/^[Tt]ak[Bb]ot: play/) {
+	} elsif($line =~ m/^TakBot:\s*play\s*($ai_name_re)?/oi) {
 		#send_line($sock, "Shout Hi, $user!  I'm looking for your game now\n");
 		if(exists $seek_table{$user}) {
 			send_line($sock, "Shout $user: OK, joining your game.\n");
-			open_connection($seek_table{$user}, $sock);
+			open_connection($seek_table{$user}, $sock, $1);
 		} else {
 			send_line($sock, "Shout $user: Sorry, I don't see a game to join from you.  Please create a game first.\n");
 		}
+	} elsif($line =~ m/^TakBot:\s*help/i) {
+		send_line($sock, "Shout To play against me, first create a new game.\n");
+		send_line($sock, "Shout Then say 'TakBot: play'\n");
+		send_line($sock, "Shout If you want to pick which AI you play against, add the AI name after 'play'\n");
+		send_line($sock, "Shout If you want to change AIs in mid game say 'TakBot: ai <new_ai_name>'\n");
+		send_line($sock, "Shout The AIs that I currently can use are: " . join(", ", @known_ais) . "\n");
 	}
 }
 
 
-sub open_connection($;$) {
+sub open_connection($;$$) {
 	my $name = shift;
 	my $control_sock = shift;
+	my $ai_selection = shift;
 
 	if($fork && $name ne 'control') {
 		my $pid = fork();
@@ -224,6 +259,11 @@ sub open_connection($;$) {
 				      Proto    => 'tcp');
 	$sock->name($name);
 	$sock->blocking(undef);
+	if(defined $ai_selection) {
+		$sock->ai($ai_selection);
+	} else {
+		$sock->ai($default_ai);
+	}
 	$selector->add($sock);
 	return $sock;
 }
@@ -285,7 +325,7 @@ sub letter_sub($$) {
 
 sub ptn_to_playtak($) {
 	my $ptn = shift;
-	if($ptn =~ m/^([FCS]?)([a-h][1-8])$/) {
+	if($ptn =~ m/^([FCS]?)([a-h][1-8])$/i) {
 		#It's a place
 		my $ret = 'P ' . uc $2;
 		if($1 eq 'C') {
@@ -338,6 +378,8 @@ sub playtak_to_ptn($) {
 			$ret = 'S' . $ret;
 		} elsif(defined $words[2] && $words[2] eq 'C') {
 			$ret = 'C' . $ret;
+		} else {
+			$ret = 'F' . $ret; #Alphatak's torch AI requires the F
 		}
 		print "playtak_to_ptn($playtak) -> $ret\n" if $debug_ptn;
 		return $ret;
@@ -384,20 +426,58 @@ sub playtak_to_ptn($) {
 	}
 }
 
+sub get_move_from_rtak($) {
+	my $ptn = shift;
+	my $query = $rtak_ai_base_url . "code=" . uri_escape($ptn);
+	print "Query: $query\n" if $debug_rtak;
+	my $ret = get($query);
+	if(!defined $ret) {
+		return undef;
+	}
+	print "Returned $ret\n" if $debug_rtak;
+	my $move = decode_json($ret)->{d};
+	print "Move is $move\n" if $debug_rtak;
+	return $move;
+}
+
+sub get_move_from_torch_ai($$) {
+	my $ai_name = shift;
+	my $ptn = shift;
+	chdir $torch_ai_path;
+	my $script = $torch_ai_path . "/takbot_${ai_name}.lua";
+	print "calling $script with th\n" if $debug_torch;
+	my ($ai_reader, $ai_writer);
+	my $ai_pid = open2($ai_reader, $ai_writer, "th $script");
+	print $ai_writer $ptn;
+	close $ai_writer;
+	my @ai_return = <$ai_reader>;
+	print "AI returned: @ai_return" if $debug_torch;
+	my $move = $ai_return[-2];
+	print "move line is $move" if $debug_torch;
+	chomp $move;
+	$move =~ s/AI move: ([^,]+),.*$/$1/;
+	$move = ucfirst $move;
+	print "Move finally is $move\n" if $debug_torch;
+	return $move;
+}
+
 sub get_move_from_ai($) {
 	my $sock = shift;
 	my $game_no = $sock->name();
-	my $query = $ai_base_url . "code=" . uri_escape($sock->ptn());
-	print "Query: $query\n" if $debug_ai;
-	my $ret = get($query);
-	if(!defined $ret) {
+	my $ptn = $sock->ptn();
+	my $move;
+	if($sock->ai() eq 'rtak') {
+		$move = get_move_from_rtak($ptn);
+	} elsif($sock->ai() eq 'george') {
+		$move = get_move_from_torch_ai('george', $ptn);
+	} elsif($sock->ai() eq 'flatimir') {
+		$move = get_move_from_torch_ai('flatimir', $ptn);
+	}
+	if(!defined $move) {
 		send_line($sock, "Shout Sorry, the AI encountered an error.  I surrender.\n");
 		send_line($sock, "Game#$game_no Resign\n");
 		return;
 	}
-	print "Returned $ret\n" if $debug_ai;
-	my $move = decode_json($ret)->{d};
-	print "Move is $move\n" if $debug_ai;
 	add_move($sock, $move);
 	$move = ptn_to_playtak($move);
 	send_line($sock, "Game#$game_no $move\n");
@@ -411,7 +491,7 @@ sub add_move($$) {
 	my $last_line = $old_ptn;
 	chomp $last_line;
 	$last_line =~ s/.*\n//s;
-	print "last line: $last_line" if $debug_ptn;
+	print "last line: $last_line\n" if $debug_ptn;
 	if($last_line =~ m/^\s*([0-9]+)\.\s+([SC1-8a-h<>+-]+)\s([SC1-8a-h><+-]+)?/) {
 		my $turn = $1;
 		my $white_move = $2;
@@ -434,6 +514,7 @@ use parent 'IO::Socket::INET';
 my %name_map;
 my %last_lines;
 my %ptn_map;
+my %ai_map;
 #my %move_count;
 
 sub name($;$) {
@@ -463,6 +544,25 @@ sub ptn($;$) {
 	return $ptn_map{$self};
 }
 
+sub ai($$) {
+	my $self = shift;
+	my $ai = shift;
+	if(defined $ai) {
+		my $new_ai = lc $ai;
+		if($new_ai eq 'rtak') {
+			send_line($self, "Shout RTak by Shlkt\n") if $color_enabled;
+		} elsif($new_ai eq 'george') {
+			send_line($self, "Shout George TakAI by alphatak\n") if $color_enabled;
+		} elsif($new_ai eq 'flatimir') {
+			send_line($self, "Shout Flatimir by alphatak\n") if $color_enabled;
+		} else {
+			send_line($self, "Shout I don't know about the $new_ai AI.\n");
+			return undef;
+		}
+		$ai_map{$self} = $new_ai;
+	}
+	return $ai_map{$self};
+}
 #sub move_count($;$) {
 #	my $self = shift;
 #	my $incr = shift;
