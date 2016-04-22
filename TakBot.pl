@@ -212,16 +212,24 @@ sub parse_control_shout($$$) {
 	my $user = shift;
 	my $line = shift;
 
-	if($user eq $owner_name && $line =~ m/^[Tt]ak[Bb]ot: fight ($user_re)\s*($ai_name_re)?/o) {
+	my $owner_cmd = $user eq $owner_name;
+
+	if($owner_cmd && $line =~ m/^TakBot: fight ($user_re)\s*($ai_name_re)?/o) {
 		if(exists $seek_table{$1}) {
 			send_line($sock, "Shout $user: OK, joining $1's game.\n");
 			open_connection($seek_table{$1}, $sock, $2);
 		} else {
 			send_line($sock, "Shout $user: Sorry, I don't see a game from $1.\n");
 		}
-	} elsif($user eq $owner_name && $line =~ m/^TakBot: reboot$/) {
+	} elsif($owner_cmd && $line =~ m/^TakBot: reboot$/) {
 		send_line($sock, "Shout $user: Aye, aye.  Brb!\n");
 		exec { $orig_command_line[0] }  @orig_command_line;
+	} elsif($owner_cmd && $line =~ m/^TakBot: (no )?talk$/) {
+		if(defined $1 && $1 eq 'no ') {
+			$color_enabled = 0;
+		} else {
+			$color_enabled = 1;
+		}
 	} elsif($line =~ m/^TakBot:\s*play\s*($ai_name_re)?/oi) {
 		#send_line($sock, "Shout Hi, $user!  I'm looking for your game now\n");
 		if(exists $seek_table{$user}) {
@@ -231,10 +239,8 @@ sub parse_control_shout($$$) {
 			send_line($sock, "Shout $user: Sorry, I don't see a game to join from you.  Please create a game first.\n");
 		}
 	} elsif($line =~ m/^TakBot:\s*help/i) {
-		send_line($sock, "Shout To play against me, first create a new game.\n");
-		send_line($sock, "Shout Then say 'TakBot: play'\n");
-		send_line($sock, "Shout If you want to pick which AI you play against, add the AI name after 'play'\n");
-		send_line($sock, "Shout If you want to change AIs in mid game say 'TakBot: ai <new_ai_name>'\n");
+		send_line($sock, "Shout For instructions see https://github.com/scottven/TakBot/blob/master/README.md\n");
+	} elsif($line =~m/^TakBot:\s*list/i) {
 		send_line($sock, "Shout The AIs that I currently can use are: " . join(", ", @known_ais) . "\n");
 	}
 }
@@ -553,13 +559,13 @@ sub ai($$) {
 	if(defined $ai) {
 		my $new_ai = lc $ai;
 		if($new_ai eq 'rtak') {
-			send_line($self, "Shout RTak by Shlkt\n") if $color_enabled;
+			&main::send_line($self, "Shout RTak by Shlkt\n") if $color_enabled;
 		} elsif($new_ai eq 'george') {
-			send_line($self, "Shout George TakAI by alphatak\n") if $color_enabled;
+			&main::send_line($self, "Shout George TakAI by alphatak\n") if $color_enabled;
 		} elsif($new_ai eq 'flatimir') {
-			send_line($self, "Shout Flatimir by alphatak\n") if $color_enabled;
+			&main::send_line($self, "Shout Flatimir by alphatak\n") if $color_enabled;
 		} else {
-			send_line($self, "Shout I don't know about the $new_ai AI.\n");
+			&main::send_line($self, "Shout I don't know about the $new_ai AI.\n");
 			return undef;
 		}
 		$ai_map{$self} = $new_ai;
