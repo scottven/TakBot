@@ -25,7 +25,7 @@ my @known_ais = ('rtak', 'george', 'flatimir');
 my $default_ai = 'rtak';
 my $rtak_ai_base_url = 'http://192.168.100.154:8084/TakService/TakMoveService.svc/GetMove?';
 my $torch_ai_path = '/home/takbot/tak-ai';
-my $color_enabled = 1;
+my $color_enabled = 0;
 
 sub open_connection($;$$);
 sub drop_connection($);
@@ -458,7 +458,7 @@ sub get_move_from_torch_ai($$) {
 	my $move = $ai_return[-2];
 	print "move line is $move" if $debug_torch;
 	chomp $move;
-	$move =~ s/AI move: ([^,]+),.*$/$1/;
+	$move =~ s/.*move: ([^,]+),.*$/$1/;
 	$move = ucfirst $move;
 	print "Move finally is $move\n" if $debug_torch;
 	return $move;
