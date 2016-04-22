@@ -92,18 +92,24 @@ if($fork) {
 }
 
 #wait loop
-#FIXME: This doesn't handle sending Pings.
 while(1) {
-	my($readers, $writers, $errors) = IO::Select::select($selector, undef, $selector);
+	my($readers, $writers, $errors) = IO::Select::select($selector, undef, $selector, 30);
 	foreach my $sock (@$errors) {
 		#do something sensible
 	}
 	foreach my $sock (@$readers) {
 		my $command = get_line($sock);
+		next if !defined $command;
 		if($sock->name() eq 'control') {
 			dispatch_control($command, $sock);
 		} else {
 			dispatch_game($command, $sock);
+		}
+	}
+	my $now = time();
+	foreach my $sock ($selector->handles()) {
+		if($now - $sock->last_time() >= 30) {
+			send_line($sock, "PING\n");
 		}
 	}
 }
@@ -267,6 +273,7 @@ sub open_connection($;$$) {
 	                              PeerPort => $playtak_port,
 				      Proto    => 'tcp');
 	$sock->name($name);
+	$sock->last_time(time());
 	$sock->blocking(undef);
 	if(defined $ai_selection) {
 		$sock->ai($ai_selection);
@@ -279,6 +286,9 @@ sub open_connection($;$$) {
 
 sub drop_connection($) {
 	my $sock = shift;
+	if($sock->name() eq 'control') {
+		die "uh oh, dropping the control conneciton";
+	}
 	$selector->remove($sock);
 	$sock->close();
 	if($fork) {
@@ -303,6 +313,10 @@ sub get_line($) {
 		$msg .= ": $!";
 		die $msg;
 	}
+	if($rv == 0) {
+		drop_connection($sock);
+		return undef;
+	}
 	print "GOT: $line" if $debug_wire;
 	return $line;
 }
@@ -317,6 +331,7 @@ sub send_line($$) {
 	}
 	print "SENT: $line" if $debug_wire;
 	$sock->last_line($line);
+	$sock->last_time(time());
 }
 
 sub letter_add($$) {
@@ -522,6 +537,7 @@ use parent 'IO::Socket::INET';
 
 my %name_map;
 my %last_lines;
+my %last_times;
 my %ptn_map;
 my %ai_map;
 #my %move_count;
@@ -542,6 +558,15 @@ sub last_line($;$) {
 		$last_lines{$self} = $line;
 	}
 	return $last_lines{$self};
+}
+
+sub last_time($;$) {
+	my $self = shift;
+	my $time = shift;
+	if(defined $time) {
+		$last_times{$self} = $time;
+	}
+	return $last_times{$self};
 }
 
 sub ptn($;$) {
