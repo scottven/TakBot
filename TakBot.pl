@@ -239,7 +239,7 @@ sub parse_control_shout($$$) {
 			send_line($sock, "Shout $user: Sorry, I don't see a game to join from you.  Please create a game first.\n");
 		}
 	} elsif($line =~ m/^TakBot:\s*help/i) {
-		send_line($sock, "Shout For instructions see https://github.com/scottven/TakBot/blob/master/README.md\n");
+		send_line($sock, "Shout $user: For instructions see https://github.com/scottven/TakBot/blob/master/README.md\n");
 	} elsif($line =~m/^TakBot:\s*list/i) {
 		send_line($sock, "Shout The AIs that I currently can use are: " . join(", ", @known_ais) . "\n");
 	}
