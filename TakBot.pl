@@ -11,6 +11,7 @@ use URI::Escape;
 use JSON;
 use Carp::Always;
 use IPC::Open2;
+use threads;
 
 # FIXME: get this from the command line
 #        but the password from a file.
@@ -48,10 +49,10 @@ my %seek_table;
 
 my @orig_command_line = ($0, @ARGV);
 my $debug;
-my $fork;
+my $fork = 1; #not sure it will work w/o forking anymore
 GetOptions('debug=s' => \$debug,
            'password=s' => \$playtak_passwd,
-	   'fork' => \$fork,
+	   'fork!' => \$fork,
 	  );
 if(!defined $playtak_passwd) {
 	die 'password is required';
@@ -236,6 +237,9 @@ sub parse_control_shout($$$) {
 		} else {
 			$color_enabled = 1;
 		}
+	} elsif($owner_cmd && $line =~ m/^TakBot: shutdown$/) {
+		send_line($sock, "Shout Goodbye.\n");
+		exit(0);
 	} elsif($line =~ m/^TakBot:\s*play\s*($ai_name_re)?/oi) {
 		#send_line($sock, "Shout Hi, $user!  I'm looking for your game now\n");
 		if(exists $seek_table{$user}) {
@@ -489,14 +493,21 @@ sub get_move_from_ai($) {
 	my $sock = shift;
 	my $game_no = $sock->name();
 	my $ptn = $sock->ptn();
-	my $move;
+	my $thr;
 	if($sock->ai() eq 'rtak') {
-		$move = get_move_from_rtak($ptn);
+		$thr = threads->create(\&get_move_from_rtak, $ptn);
 	} elsif($sock->ai() eq 'george') {
-		$move = get_move_from_torch_ai('george', $ptn);
+		$thr = threads->create(\&get_move_from_torch_ai, 'george', $ptn);
 	} elsif($sock->ai() eq 'flatimir') {
-		$move = get_move_from_torch_ai('flatimir', $ptn);
+		$thr = threads->create(\&get_move_from_torch_ai, 'flatimir', $ptn);
 	}
+	while(!$thr->is_joinable()) {
+		if(time() - $sock->last_time() >= 30) {
+			send_line($sock, "PING\n");
+		}
+		sleep(1);
+	}
+	my $move = $thr->join();
 	if(!defined $move) {
 		send_line($sock, "Shout Sorry, the AI encountered an error.  I surrender.\n");
 		send_line($sock, "Game#$game_no Resign\n");
