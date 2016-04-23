@@ -12,6 +12,8 @@ use JSON;
 use Carp::Always;
 use IPC::Open2;
 use threads;
+use PTNUtils qw(ptn_to_playtak playtak_to_ptn);
+use TakBotSocket;
 
 # FIXME: get this from the command line
 #        but the password from a file.
@@ -80,10 +82,6 @@ if(defined $debug && ($debug =~ m/rtak/)) {
 	$debug_torch = 1;
 }
 open_connection('control');
-
-my %letter_values = ( a => 1, b => 2, c => 3, d => 4,
-               e => 5, f => 6, g => 7, h => 8 );
-my @letters = ( '', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h');
 
 my $ai_name_re = join('|', @known_ais);
 
@@ -273,7 +271,7 @@ sub open_connection($;$$) {
 		}
 	}
 
-	my $sock = new TakBot::Socket(PeerHost => $playtak_host,
+	my $sock = new TakBotSocket(PeerHost => $playtak_host,
 	                              PeerPort => $playtak_port,
 				      Proto    => 'tcp');
 	$sock->name($name);
@@ -336,122 +334,6 @@ sub send_line($$) {
 	print "SENT: $line" if $debug_wire;
 	$sock->last_line($line);
 	$sock->last_time(time());
-}
-
-sub letter_add($$) {
-	my $letter = shift;
-	my $count = shift;
-	print "letter_add($letter, $count): $letter_values{$letter}, $letters[$count]\n" if $debug_ptn;
-	return $letters[$letter_values{$letter}+$count];
-}
-sub letter_sub($$) {
-	my $letter = shift;
-	my $count = shift;
-	print "letter_sub($letter, $count): $letter_values{$letter}, $letters[$count]\n" if $debug_ptn;
-	return $letters[$letter_values{$letter}-$count];
-}
-
-sub ptn_to_playtak($) {
-	my $ptn = shift;
-	if($ptn =~ m/^([FCS]?)([a-h][1-8])$/i) {
-		#It's a place
-		my $ret = 'P ' . uc $2;
-		if($1 eq 'C') {
-			$ret .= ' C';
-		} elsif($1 eq 'S') {
-			$ret .= ' W';
-		}
-		print "ptn_to_playtak($ptn) -> $ret\n" if $debug_ptn;
-		return $ret;
-	} elsif($ptn =~ m/^([1-8]?)([a-h])([1-8])([-+<>])([1-8]*)$/) {
-		#It's a move
-		my $num_lifted = $1;
-		my $file = $2;
-		my $row = $3;
-		my $direction = $4;
-		my @drops = split(//, $5);
-		if(scalar(@drops) == 0) {
-			$drops[0] = 1;
-		}
-		print "drops is :" . join(", ", @drops) . ":\n" if $debug_ptn;
-		my $ret = 'M '. uc($file) . $row . ' ';
-		if($direction eq '+') {
-			$ret .= uc($file) . ($row + scalar(@drops));
-		} elsif($direction eq '-') {
-			$ret .= uc($file) . ($row - scalar(@drops));
-		} elsif($direction eq '>') {
-			$ret .= uc(letter_add($file, scalar(@drops))) . $row;
-		} elsif($direction eq '<') {
-			$ret .= uc(letter_sub($file, scalar(@drops))) . $row;
-		} else {
-			die "unexpected direction $direction in PTN $ptn";
-		}
-		foreach my $drop (@drops) {
-			$ret .= " $drop";
-		}
-		print "ptn_to_playtak($ptn) -> $ret\n" if $debug_ptn;
-		return $ret;
-	} else {
-		die "unmatched PTN $ptn";
-	}
-}
-
-sub playtak_to_ptn($) {
-	my $playtak = shift;
-	my @words = split(/ /, $playtak);
-	if($words[0] eq 'P') {
-		# It's a place
-		my $ret = lc $words[1];
-		if(defined $words[2] && $words[2] eq 'W') {
-			$ret = 'S' . $ret;
-		} elsif(defined $words[2] && $words[2] eq 'C') {
-			$ret = 'C' . $ret;
-		} else {
-			$ret = 'F' . $ret; #Alphatak's torch AI requires the F
-		}
-		print "playtak_to_ptn($playtak) -> $ret\n" if $debug_ptn;
-		return $ret;
-	} elsif($words[0] eq 'M') {
-		# It's a move
-		shift @words; #dump to M
-		my $start = shift @words;
-		my $end = shift @words;
-		my $direction;
-		#all remaining words are drop counts
-		my ($start_file, $start_row) = split(//, $start);
-		my ($end_file, $end_row) = split(//, $end);
-		if($start_file eq $end_file && $start_row == $end_row) {
-			die "can't start and end in the same place: $playtak";
-		}
-		if($start_file ne $end_file && $start_row != $end_row) {
-			die "can't move diagonally: $playtak";
-		}
-		my $cmp;
-		if($cmp = $start_row <=> $end_row) {
-			if($cmp > 0) {
-				$direction = '-';
-			} else {
-				$direction = '+';
-			}
-		} elsif($cmp = $start_file cmp $end_file) {
-			if($cmp > 0) {
-				$direction = '<';
-			} else {
-				$direction = '>';
-			}
-		}
-		my $liftsize = 0;
-		my $drop_string = '';
-		foreach my $drop(@words) {
-			$liftsize += $drop;
-			$drop_string .= $drop;
-		}
-		my $ptn = $liftsize . lc($start) . $direction . $drop_string;
-		print "playtak_to_ptn($playtak) -> $ptn\n" if $debug_ptn;
-		return $ptn;
-	} else {
-		die "unknown playtak opcode in $playtak";
-	}
 }
 
 sub get_move_from_rtak($) {
@@ -543,80 +425,4 @@ sub add_move($$) {
 	}
 }
 
-package TakBot::Socket;
-use parent 'IO::Socket::INET';
 
-my %name_map;
-my %last_lines;
-my %last_times;
-my %ptn_map;
-my %ai_map;
-#my %move_count;
-
-sub name($;$) {
-	my $self = shift;
-	my $name = shift;
-	if(defined $name) {
-		$name_map{$self} = $name;
-	}
-	return $name_map{$self};
-}
-
-sub last_line($;$) {
-	my $self = shift;
-	my $line = shift;
-	if(defined $line) {
-		$last_lines{$self} = $line;
-	}
-	return $last_lines{$self};
-}
-
-sub last_time($;$) {
-	my $self = shift;
-	my $time = shift;
-	if(defined $time) {
-		$last_times{$self} = $time;
-	}
-	return $last_times{$self};
-}
-
-sub ptn($;$) {
-	my $self = shift;
-	my $ptn = shift;
-	if(defined $ptn) {
-		$ptn_map{$self} = $ptn;
-	}
-	return $ptn_map{$self};
-}
-
-sub ai($$) {
-	my $self = shift;
-	my $ai = shift;
-	if(defined $ai) {
-		my $new_ai = lc $ai;
-		if($new_ai eq 'rtak') {
-			&main::send_line($self, "Shout RTak by Shlkt\n") if $color_enabled;
-		} elsif($new_ai eq 'george') {
-			&main::send_line($self, "Shout George TakAI by alphatak\n") if $color_enabled;
-		} elsif($new_ai eq 'flatimir') {
-			&main::send_line($self, "Shout Flatimir by alphatak\n") if $color_enabled;
-		} else {
-			&main::send_line($self, "Shout I don't know about the $new_ai AI.\n");
-			return undef;
-		}
-		$ai_map{$self} = $new_ai;
-	}
-	return $ai_map{$self};
-}
-#sub move_count($;$) {
-#	my $self = shift;
-#	my $incr = shift;
-#	if(!exists $move_count{$self}) {
-#		$move_count{$self} = 0;
-#	}
-#	if(defined $incr) {
-#		$move_count{$self}++;
-#	}
-#	return $move_count{$self};
-#}
-1;
