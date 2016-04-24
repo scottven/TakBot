@@ -9,6 +9,57 @@ my %last_times;
 my %ptn_map;
 my %ai_map;
 
+sub send_line($$) {
+	my $self = shift;
+	my $line = shift;
+	if($self->syswrite($line) != length($line)) {
+		my $msg = "failed to send $line to ";
+		$msg .= $self->name();
+		$msg .= ": $!";
+	}
+	print "SENT: $line" if $main::debug_wire;
+	$self->last_line($line);
+	$self->last_time(time());
+}
+
+sub get_line($) {
+	my $self = shift;
+	my $line;
+	my $buf;
+	my $rv;
+	while($rv = $self->sysread($buf, 1)) {
+		$line .= $buf;
+		if($buf eq "\n") {
+			last;
+		}
+	}
+	if(!defined $rv) {
+		my $msg = "tried to read from a closed socket: ";
+		$msg .= $self->name();
+		$msg .= ": $!";
+		die $msg;
+	}
+	if($rv == 0) {
+		$self->drop_connection();
+		return undef;
+	}
+	print "GOT: $line" if $main::debug_wire;
+	return $line;
+}
+
+sub drop_connection($$) {
+	my $self = shift;
+	my $selector = shift;
+	if($self->name() eq 'control') {
+		die "uh oh, dropping the control conneciton";
+	}
+	$selector->remove($self);
+	$self->close();
+	if($main::fork) {
+		exit 0;
+	}
+}
+
 sub name($;$) {
 	my $self = shift;
 	my $name = shift;

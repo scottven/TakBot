@@ -31,15 +31,10 @@ my $torch_ai_path = '/home/takbot/tak-ai';
 my $color_enabled = 0;
 
 sub open_connection($;$$);
-sub drop_connection($);
-sub get_line($);
-sub send_line($$);
 sub dispatch_control($$);
 sub dispatch_game($$);
 sub parse_control_shout($$$);
 sub parse_game_shout($$$);
-sub ptn_to_playtak($);
-sub playtak_to_ptn($);
 sub get_move_from_ai($);
 sub add_move($$);
 
@@ -108,7 +103,7 @@ while(1) {
 	my $now = time();
 	foreach my $sock ($selector->handles()) {
 		if($now - $sock->last_time() >= 30) {
-			send_line($sock, "PING\n");
+			$sock->send_line("PING\n");
 		}
 	}
 }
@@ -118,9 +113,9 @@ sub dispatch_control($$) {
 	my $sock = shift;
 	chomp $line;
 	if($line =~ m/^Welcome!/) {
-		send_line($sock, "Client TakBot control alpha test\n");
+		$sock->send_line("Client TakBot control alpha test\n");
 	} elsif($line =~ m/^Login or Register/) {
-		send_line($sock, "Login $playtak_user $playtak_passwd\n");
+		$sock->send_line("Login $playtak_user $playtak_passwd\n");
 	} elsif($line =~ m/^Welcome $playtak_user!/o) {
 		#nop for control
 	} elsif($line =~ m/^Online/) {
@@ -153,11 +148,11 @@ sub dispatch_game($$) {
 	my $game_no = $sock->name();
 	chomp $line;
 	if($line =~ m/^Welcome!/) {
-		send_line($sock, "Client TakBot game alpha test\n");
+		$sock->send_line("Client TakBot game alpha test\n");
 	} elsif($line =~ m/^Login or Register/) {
-		send_line($sock, "Login Guest\n");
+		$sock->send_line("Login Guest\n");
 	} elsif($line =~ m/^Welcome Guest[0-9]+!/o) {
-		send_line($sock, "Accept $game_no\n");
+		$sock->send_line("Accept $game_no\n");
 	} elsif($line =~ m/^Game#$game_no Time/) {
 		#nop for bots, at least for now
 	} elsif($line =~ m/^Game#$game_no ([PM] .*)/) {
@@ -165,12 +160,12 @@ sub dispatch_game($$) {
 		add_move($sock, $ptn);
 		get_move_from_ai($sock);
 	} elsif($line =~ m/^Game#$game_no (Over|Abandoned)/) {
-		drop_connection($sock);
+		$sock->drop_connection($selector);
 	} elsif($line =~ m/^Game#$game_no OfferDraw/) {
 		#accept all offers for draws
-		send_line($sock, "Game#$game_no OfferDraw\n");
+		$sock->send_line("Game#$game_no OfferDraw\n");
 		if($color_enabled && $sock->ai() eq 'george') {
-			send_line($sock, "Shout A tied game... Oh myyyy.\n");
+			$sock->send_line("Shout A tied game... Oh myyyy.\n");
 		}
 	} elsif($line =~ m/^Online/) {
 		#nop for game
@@ -221,13 +216,13 @@ sub parse_control_shout($$$) {
 
 	if($owner_cmd && $line =~ m/^TakBot: fight ($user_re)\s*($ai_name_re)?/o) {
 		if(exists $seek_table{$1}) {
-			send_line($sock, "Shout $user: OK, joining $1's game.\n");
+			$sock->send_line("Shout $user: OK, joining $1's game.\n");
 			open_connection($seek_table{$1}, $sock, $2);
 		} else {
-			send_line($sock, "Shout $user: Sorry, I don't see a game from $1.\n");
+			$sock->send_line("Shout $user: Sorry, I don't see a game from $1.\n");
 		}
 	} elsif($owner_cmd && $line =~ m/^TakBot: reboot$/) {
-		send_line($sock, "Shout $user: Aye, aye.  Brb!\n");
+		$sock->send_line("Shout $user: Aye, aye.  Brb!\n");
 		exec { $orig_command_line[0] }  @orig_command_line;
 	} elsif($owner_cmd && $line =~ m/^TakBot: (no )?talk$/) {
 		if(defined $1 && $1 eq 'no ') {
@@ -236,20 +231,20 @@ sub parse_control_shout($$$) {
 			$color_enabled = 1;
 		}
 	} elsif($owner_cmd && $line =~ m/^TakBot: shutdown$/) {
-		send_line($sock, "Shout Goodbye.\n");
+		$sock->send_line("Shout Goodbye.\n");
 		exit(0);
 	} elsif($line =~ m/^TakBot:\s*play\s*($ai_name_re)?/oi) {
-		#send_line($sock, "Shout Hi, $user!  I'm looking for your game now\n");
+		#$sock->send_line("Shout Hi, $user!  I'm looking for your game now\n");
 		if(exists $seek_table{$user}) {
-			send_line($sock, "Shout $user: OK, joining your game.\n");
+			$sock->send_line("Shout $user: OK, joining your game.\n");
 			open_connection($seek_table{$user}, $sock, $1);
 		} else {
-			send_line($sock, "Shout $user: Sorry, I don't see a game to join from you.  Please create a game first.\n");
+			$sock->send_line("Shout $user: Sorry, I don't see a game to join from you.  Please create a game first.\n");
 		}
 	} elsif($line =~ m/^TakBot:\s*help/i) {
-		send_line($sock, "Shout $user: For instructions see https://github.com/scottven/TakBot/blob/master/README.md\n");
+		$sock->send_line("Shout $user: For instructions see https://github.com/scottven/TakBot/blob/master/README.md\n");
 	} elsif($line =~m/^TakBot:\s*list/i) {
-		send_line($sock, "Shout The AIs that I currently can use are: " . join(", ", @known_ais) . "\n");
+		$sock->send_line("Shout The AIs that I currently can use are: " . join(", ", @known_ais) . "\n");
 	}
 }
 
@@ -284,56 +279,6 @@ sub open_connection($;$$) {
 	}
 	$selector->add($sock);
 	return $sock;
-}
-
-sub drop_connection($) {
-	my $sock = shift;
-	if($sock->name() eq 'control') {
-		die "uh oh, dropping the control conneciton";
-	}
-	$selector->remove($sock);
-	$sock->close();
-	if($fork) {
-		exit 0;
-	}
-}
-
-sub get_line($) {
-	my $sock = shift;
-	my $line;
-	my $buf;
-	my $rv;
-	while($rv = $sock->sysread($buf, 1)) {
-		$line .= $buf;
-		if($buf eq "\n") {
-			last;
-		}
-	}
-	if(!defined $rv) {
-		my $msg = "tried to read from a closed socket: ";
-		$msg .= $sock->name();
-		$msg .= ": $!";
-		die $msg;
-	}
-	if($rv == 0) {
-		drop_connection($sock);
-		return undef;
-	}
-	print "GOT: $line" if $debug_wire;
-	return $line;
-}
-
-sub send_line($$) {
-	my $sock = shift;
-	my $line = shift;
-	if($sock->syswrite($line) != length($line)) {
-		my $msg = "failed to send $line to ";
-		$msg .= $sock->name();
-		$msg .= ": $!";
-	}
-	print "SENT: $line" if $debug_wire;
-	$sock->last_line($line);
-	$sock->last_time(time());
 }
 
 sub get_move_from_rtak($) {
@@ -385,19 +330,19 @@ sub get_move_from_ai($) {
 	}
 	while(!$thr->is_joinable()) {
 		if(time() - $sock->last_time() >= 30) {
-			send_line($sock, "PING\n");
+			$sock->send_line("PING\n");
 		}
 		sleep(1);
 	}
 	my $move = $thr->join();
 	if(!defined $move) {
-		send_line($sock, "Shout Sorry, the AI encountered an error.  I surrender.\n");
-		send_line($sock, "Game#$game_no Resign\n");
+		$sock->send_line("Shout Sorry, the AI encountered an error.  I surrender.\n");
+		$sock->send_line("Game#$game_no Resign\n");
 		return;
 	}
 	add_move($sock, $move);
 	$move = ptn_to_playtak($move);
-	send_line($sock, "Game#$game_no $move\n");
+	$sock->send_line("Game#$game_no $move\n");
 }
 
 sub add_move($$) {
