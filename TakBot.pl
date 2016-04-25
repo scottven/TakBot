@@ -251,7 +251,7 @@ sub parse_control_shout($$$) {
 	} elsif($owner_cmd && $line =~ m/^TakBot: shutdown$/) {
 		send_line($sock, "Shout Goodbye.\n");
 		exit(0);
-	} elsif($line =~ m/^TakBot:\s*play\s*($ai_name_re)?/oi) {
+	} elsif($line =~ m/^TakBot:?\s*play\s*($ai_name_re)?/oi) {
 		#send_line($sock, "Shout Hi, $user!  I'm looking for your game now\n");
 		if(exists $seek_table{$user}) {
 			send_line($sock, "Shout $user: OK, joining your game.\n");
