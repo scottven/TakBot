@@ -37,6 +37,7 @@ sub parse_control_shout($$$);
 sub parse_game_shout($$$);
 sub get_move_from_ai($);
 sub handle_move_from_ai($$);
+sub undo_move($);
 sub add_move($$);
 
 # global object for doing non-blocking network IO
@@ -60,11 +61,16 @@ our $debug_ptn;
 our $debug_ai;
 our $debug_torch;
 our $debug_rtak;
+our $debug_undo;
 if(defined $debug && ($debug =~ m/wire/ || $debug eq 'all' || $debug eq '1')) {
 	$debug_wire = 1;
 }
 if(defined $debug && ($debug =~ m/ptn/  || $debug eq 'all' || $debug eq '1')) {
 	$debug_ptn = 1;
+	$debug_undo = 1;
+}
+if(defined $debug && ($debug =~ m/undo/)) {
+	$debug_undo = 1;
 }
 if(defined $debug && ($debug =~ m/ai/  || $debug eq 'all' || $debug eq '1')) {
 	$debug_ai = 1;
@@ -166,6 +172,11 @@ sub dispatch_game($$) {
 		get_move_from_ai($sock);
 	} elsif($line =~ m/^Game#$game_no (Over|Abandoned)/) {
 		$sock->drop_connection($selector);
+	} elsif($line =~ m/^Game#$game_no RequestUndo/) {
+		#send_line($sock, "Game#$game_no RequestUndo\n");
+	} elsif($line =~ m/^Game#$game_no Undo/) {
+		#undo_move($sock);
+		#send_line($sock, "Game#$game_no RequestUndo\n");
 	} elsif($line =~ m/^Game#$game_no OfferDraw/) {
 		#accept all offers for draws
 		$sock->send_line("Game#$game_no OfferDraw\n");
@@ -240,7 +251,7 @@ sub parse_control_shout($$$) {
 		$sock->send_line("Shout Goodbye.\n");
 		$sock->send_line("quit\n");
 		exit(0);
-	} elsif($line =~ m/^TakBot:\s*play\s*($ai_name_re)?/oi) {
+	} elsif($line =~ m/^TakBot:?\s*play\s*($ai_name_re)?/oi) {
 		#$sock->send_line("Shout Hi, $user!  I'm looking for your game now\n");
 		if(exists $seek_table{$user}) {
 			$sock->send_line("Shout $user: OK, joining your game.\n");
@@ -370,6 +381,28 @@ sub handle_move_from_ai($$) {
 	$reader->close();
 }
 
+sub undo_move($) {
+	my $sock = shift;
+	my $old_ptn = $sock->ptn();
+	print "undoing $old_ptn\n" if $debug_undo;
+	my @ptn_lines = split(/\n/, $old_ptn);
+	if($ptn_lines[-1] =~ m/^\s*([0-9]+)\.\s+([SFC1-8a-h<>+-]+)\s([FSC1-8a-h><+-]+)?/) {
+		my $turn = $1;
+		my $white_move = $2;
+		my $black_move = $3;
+		if(!defined $black_move) {
+			$sock->ptn(join("\n", @ptn_lines[0 ... $#ptn_lines-1]));
+		} else {
+			$ptn_lines[-1] = $turn . ".\t$white_move\t";
+			$sock->ptn(join("\n", @ptn_lines));
+		}
+	} else {
+		#no moves, so nothing to undo
+	}
+	print "ended up with " . $sock->ptn() . "\n" if $debug_undo;
+}
+
+
 sub add_move($$) {
 	my $sock = shift;
 	my $new_move = shift;
@@ -379,7 +412,7 @@ sub add_move($$) {
 	chomp $last_line;
 	$last_line =~ s/.*\n//s;
 	print "last line: $last_line\n" if $debug_ptn;
-	if($last_line =~ m/^\s*([0-9]+)\.\s+([SC1-8a-h<>+-]+)\s([SC1-8a-h><+-]+)?/) {
+	if($last_line =~ m/^\s*([0-9]+)\.\s+([FSC1-8a-h<>+-]+)\s([FSC1-8a-h><+-]+)?/) {
 		my $turn = $1;
 		my $white_move = $2;
 		my $black_move = $3;
