@@ -8,6 +8,7 @@ my %last_lines;
 my %last_times;
 my %ptn_map;
 my %ai_map;
+my %connection_map;
 
 sub send_line($$) {
 	my $self = shift;
@@ -40,6 +41,7 @@ sub get_line($) {
 		die $msg;
 	}
 	if($rv == 0) {
+		print "dropping $self\n" if $main::debug_wire;
 		$self->drop_connection();
 		return undef;
 	}
@@ -53,6 +55,7 @@ sub drop_connection($$) {
 	if($self->name() eq 'control') {
 		die "uh oh, dropping the control conneciton";
 	}
+	$self->send_line("quit\n");
 	$selector->remove($self);
 	$self->close();
 	if($main::fork) {
@@ -94,6 +97,15 @@ sub ptn($;$) {
 		$ptn_map{$self} = $ptn;
 	}
 	return $ptn_map{$self};
+}
+
+sub connection($;$) {
+	my $self = shift;
+	my $connection = shift;
+	if(defined $connection) {
+		$connection_map{$self} = $connection;
+	}
+	return $connection_map{$self};
 }
 
 sub ai($$) {

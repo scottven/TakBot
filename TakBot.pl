@@ -36,6 +36,7 @@ sub dispatch_game($$);
 sub parse_control_shout($$$);
 sub parse_game_shout($$$);
 sub get_move_from_ai($);
+sub handle_move_from_ai($$);
 sub add_move($$);
 
 # global object for doing non-blocking network IO
@@ -54,11 +55,11 @@ GetOptions('debug=s' => \$debug,
 if(!defined $playtak_passwd) {
 	die 'password is required';
 }
-my $debug_wire;
-my $debug_ptn;
-my $debug_ai;
-my $debug_torch;
-my $debug_rtak;
+our $debug_wire;
+our $debug_ptn;
+our $debug_ai;
+our $debug_torch;
+our $debug_rtak;
 if(defined $debug && ($debug =~ m/wire/ || $debug eq 'all' || $debug eq '1')) {
 	$debug_wire = 1;
 }
@@ -92,16 +93,20 @@ while(1) {
 		#do something sensible
 	}
 	foreach my $sock (@$readers) {
-		my $command = get_line($sock);
+		my $command = $sock->get_line();
 		next if !defined $command;
-		if($sock->name() eq 'control') {
+		my $name = $sock->name();
+		if($name eq 'control') {
 			dispatch_control($command, $sock);
+		} elsif($name =~ m/ai_/) {
+			handle_move_from_ai($command, $sock);
 		} else {
 			dispatch_game($command, $sock);
 		}
 	}
 	my $now = time();
 	foreach my $sock ($selector->handles()) {
+		next if $sock->name() =~ m/ai_/; #don't ping the AI socket
 		if($now - $sock->last_time() >= 30) {
 			$sock->send_line("PING\n");
 		}
@@ -202,6 +207,7 @@ sub parse_game_shout($$$) {
 	my $user = shift;
 	my $line = shift;
 
+	# FIXME: limit this to the opponent
 	if($line =~ m/^takbot:\s*ai\s*($ai_name_re)/oi) {
 		$sock->ai($1);
 	}
@@ -232,6 +238,7 @@ sub parse_control_shout($$$) {
 		}
 	} elsif($owner_cmd && $line =~ m/^TakBot: shutdown$/) {
 		$sock->send_line("Shout Goodbye.\n");
+		$sock->send_line("quit\n");
 		exit(0);
 	} elsif($line =~ m/^TakBot:\s*play\s*($ai_name_re)?/oi) {
 		#$sock->send_line("Shout Hi, $user!  I'm looking for your game now\n");
@@ -281,8 +288,9 @@ sub open_connection($;$$) {
 	return $sock;
 }
 
-sub get_move_from_rtak($) {
+sub get_move_from_rtak($$) {
 	my $ptn = shift;
+	my $writer = shift;
 	my $query = $rtak_ai_base_url . "code=" . uri_escape($ptn);
 	print "Query: $query\n" if $debug_rtak;
 	my $ret = get($query);
@@ -292,12 +300,14 @@ sub get_move_from_rtak($) {
 	print "Returned $ret\n" if $debug_rtak;
 	my $move = decode_json($ret)->{d};
 	print "Move is $move\n" if $debug_rtak;
-	return $move;
+	$writer->send_line("$move\n");
+	$writer->close();
 }
 
-sub get_move_from_torch_ai($$) {
+sub get_move_from_torch_ai($$$) {
 	my $ai_name = shift;
 	my $ptn = shift;
+	my $writer = shift;
 	chdir $torch_ai_path;
 	my $script = $torch_ai_path . "/takbot_${ai_name}.lua";
 	print "calling $script with th\n" if $debug_torch;
@@ -313,36 +323,51 @@ sub get_move_from_torch_ai($$) {
 	$move =~ s/.*move: ([^,]+),.*$/$1/;
 	$move = ucfirst $move;
 	print "Move finally is $move\n" if $debug_torch;
-	return $move;
+	$writer->send_line("$move\n");
+	$writer->close();
 }
 
 sub get_move_from_ai($) {
 	my $sock = shift;
 	my $game_no = $sock->name();
 	my $ptn = $sock->ptn();
+	my ($reader, $writer) = TakBotSocket->socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC);
+	print "sockets are $sock, $reader, and $writer\n" if $debug_ai;
+	$reader->name("ai_$game_no");
+	$reader->blocking(undef);
+	$reader->connection($sock);
 	my $thr;
 	if($sock->ai() eq 'rtak') {
-		$thr = threads->create(\&get_move_from_rtak, $ptn);
+		$thr = threads->create(\&get_move_from_rtak, $ptn, $writer);
 	} elsif($sock->ai() eq 'george') {
-		$thr = threads->create(\&get_move_from_torch_ai, 'george', $ptn);
+		$thr = threads->create(\&get_move_from_torch_ai, 'george', $ptn, $writer);
 	} elsif($sock->ai() eq 'flatimir') {
-		$thr = threads->create(\&get_move_from_torch_ai, 'flatimir', $ptn);
+		$thr = threads->create(\&get_move_from_torch_ai, 'flatimir', $ptn, $writer);
 	}
-	while(!$thr->is_joinable()) {
-		if(time() - $sock->last_time() >= 30) {
-			$sock->send_line("PING\n");
-		}
-		sleep(1);
-	}
-	my $move = $thr->join();
-	if(!defined $move) {
+	$thr->detach();
+	$selector->add($reader);
+	print "$game_no AI request queued.\n" if $debug_ai;
+}
+
+sub handle_move_from_ai($$) {
+	my $move = shift;
+	my $reader = shift;
+	print "handling reply for " . $reader->name() . "\n" if $debug_ai;
+	my $sock = $reader->connection();
+	my $game_no = $sock->name();
+	chomp $move;
+	print "read $move from $reader for $sock\n" if $debug_ai;
+	if(!defined $move || $move eq '') {
 		$sock->send_line("Shout Sorry, the AI encountered an error.  I surrender.\n");
 		$sock->send_line("Game#$game_no Resign\n");
 		return;
 	}
+	print "got $move for $game_no from ai\n" if $debug_ai;
 	add_move($sock, $move);
 	$move = ptn_to_playtak($move);
 	$sock->send_line("Game#$game_no $move\n");
+	$selector->remove($reader);
+	$reader->close();
 }
 
 sub add_move($$) {
