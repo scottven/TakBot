@@ -18,7 +18,7 @@ sub send_line($$) {
 		$msg .= $self->name();
 		$msg .= ": $!";
 	}
-	print "SENT: $line" if $main::debug_wire;
+	print "SENT: $line" if $main::debug{wire};
 	$self->last_line($line);
 	$self->last_time(time());
 }
@@ -41,11 +41,11 @@ sub get_line($) {
 		die $msg;
 	}
 	if($rv == 0) {
-		print "dropping $self\n" if $main::debug_wire;
+		print "dropping $self\n" if $main::debug{wire};
 		$self->drop_connection();
 		return undef;
 	}
-	print "GOT: $line" if $main::debug_wire;
+	print "GOT: $line" if $main::debug{wire};
 	return $line;
 }
 
@@ -114,13 +114,13 @@ sub ai($$) {
 	if(defined $ai) {
 		my $new_ai = lc $ai;
 		if($new_ai eq 'rtak') {
-			&main::send_line($self, "Shout RTak by Shlkt\n") if $main::color_enabled;
+			$self->send_line("Shout RTak by Shlkt\n") if $main::color_enabled;
 		} elsif($new_ai eq 'george') {
-			&main::send_line($self, "Shout George TakAI by alphatak\n") if $main::color_enabled;
+			$self->send_line("Shout George TakAI by alphatak\n") if $main::color_enabled;
 		} elsif($new_ai eq 'flatimir') {
-			&main::send_line($self, "Shout Flatimir by alphatak\n") if $main::color_enabled;
+			$self->send_line("Shout Flatimir by alphatak\n") if $main::color_enabled;
 		} else {
-			&main::send_line($self, "Shout I don't know about the $new_ai AI.\n");
+			$self->send_line("Shout I don't know about the $new_ai AI.\n");
 			return undef;
 		}
 		$ai_map{$self} = $new_ai;

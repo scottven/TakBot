@@ -56,32 +56,28 @@ GetOptions('debug=s' => \$debug,
 if(!defined $playtak_passwd) {
 	die 'password is required';
 }
-our $debug_wire;
-our $debug_ptn;
-our $debug_ai;
-our $debug_torch;
-our $debug_rtak;
-our $debug_undo;
+
+our %debug;
 if(defined $debug && ($debug =~ m/wire/ || $debug eq 'all' || $debug eq '1')) {
-	$debug_wire = 1;
+	$debug{wire} = 1;
 }
 if(defined $debug && ($debug =~ m/ptn/  || $debug eq 'all' || $debug eq '1')) {
-	$debug_ptn = 1;
-	$debug_undo = 1;
+	$debug{ptn} = 1;
+	$debug{undo} = 1;
 }
 if(defined $debug && ($debug =~ m/undo/)) {
-	$debug_undo = 1;
+	$debug{undo} = 1;
 }
 if(defined $debug && ($debug =~ m/ai/  || $debug eq 'all' || $debug eq '1')) {
-	$debug_ai = 1;
-	$debug_torch = 1;
-	$debug_rtak = 1;
+	$debug{ai} = 1;
+	$debug{torch} = 1;
+	$debug{rtak} = 1;
 }
 if(defined $debug && ($debug =~ m/torch/)) {
-	$debug_torch = 1;
+	$debug{torch} = 1;
 }
 if(defined $debug && ($debug =~ m/rtak/)) {
-	$debug_torch = 1;
+	$debug{torch} = 1;
 }
 open_connection('control');
 
@@ -247,6 +243,13 @@ sub parse_control_shout($$$) {
 		} else {
 			$color_enabled = 1;
 		}
+	} elsif($owner_cmd && $line =~ m/^TakBot: (no )?debug (\w+)$/) {
+		my $type = $2;
+		if(defined $1 && $1 eq 'no ') {
+			$debug{$type} = 0;
+		} else {
+			$debug{$type}= 1;
+		}
 	} elsif($owner_cmd && $line =~ m/^TakBot: shutdown$/) {
 		$sock->send_line("Shout Goodbye.\n");
 		$sock->send_line("quit\n");
@@ -303,14 +306,14 @@ sub get_move_from_rtak($$) {
 	my $ptn = shift;
 	my $writer = shift;
 	my $query = $rtak_ai_base_url . "code=" . uri_escape($ptn);
-	print "Query: $query\n" if $debug_rtak;
+	print "Query: $query\n" if $debug{rtak};
 	my $ret = get($query);
 	if(!defined $ret) {
 		return undef;
 	}
-	print "Returned $ret\n" if $debug_rtak;
+	print "Returned $ret\n" if $debug{rtak};
 	my $move = decode_json($ret)->{d};
-	print "Move is $move\n" if $debug_rtak;
+	print "Move is $move\n" if $debug{rtak};
 	$writer->send_line("$move\n");
 	$writer->close();
 }
@@ -321,19 +324,19 @@ sub get_move_from_torch_ai($$$) {
 	my $writer = shift;
 	chdir $torch_ai_path;
 	my $script = $torch_ai_path . "/takbot_${ai_name}.lua";
-	print "calling $script with th\n" if $debug_torch;
+	print "calling $script with th\n" if $debug{torch};
 	my ($ai_reader, $ai_writer);
 	my $ai_pid = open2($ai_reader, $ai_writer, "th $script");
 	print $ai_writer $ptn;
 	close $ai_writer;
 	my @ai_return = <$ai_reader>;
-	print "AI returned: @ai_return" if $debug_torch;
+	print "AI returned: @ai_return" if $debug{torch};
 	my $move = $ai_return[-2];
-	print "move line is $move" if $debug_torch;
+	print "move line is $move" if $debug{torch};
 	chomp $move;
 	$move =~ s/.*move: ([^,]+),.*$/$1/;
 	$move = ucfirst $move;
-	print "Move finally is $move\n" if $debug_torch;
+	print "Move finally is $move\n" if $debug{torch};
 	$writer->send_line("$move\n");
 	$writer->close();
 }
@@ -343,7 +346,7 @@ sub get_move_from_ai($) {
 	my $game_no = $sock->name();
 	my $ptn = $sock->ptn();
 	my ($reader, $writer) = TakBotSocket->socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC);
-	print "sockets are $sock, $reader, and $writer\n" if $debug_ai;
+	print "sockets are $sock, $reader, and $writer\n" if $debug{ai};
 	$reader->name("ai_$game_no");
 	$reader->blocking(undef);
 	$reader->connection($sock);
@@ -357,23 +360,23 @@ sub get_move_from_ai($) {
 	}
 	$thr->detach();
 	$selector->add($reader);
-	print "$game_no AI request queued.\n" if $debug_ai;
+	print "$game_no AI request queued.\n" if $debug{ai};
 }
 
 sub handle_move_from_ai($$) {
 	my $move = shift;
 	my $reader = shift;
-	print "handling reply for " . $reader->name() . "\n" if $debug_ai;
+	print "handling reply for " . $reader->name() . "\n" if $debug{ai};
 	my $sock = $reader->connection();
 	my $game_no = $sock->name();
 	chomp $move;
-	print "read $move from $reader for $sock\n" if $debug_ai;
+	print "read $move from $reader for $sock\n" if $debug{ai};
 	if(!defined $move || $move eq '') {
 		$sock->send_line("Shout Sorry, the AI encountered an error.  I surrender.\n");
 		$sock->send_line("Game#$game_no Resign\n");
 		return;
 	}
-	print "got $move for $game_no from ai\n" if $debug_ai;
+	print "got $move for $game_no from ai\n" if $debug{ai};
 	add_move($sock, $move);
 	$move = ptn_to_playtak($move);
 	$sock->send_line("Game#$game_no $move\n");
@@ -384,7 +387,7 @@ sub handle_move_from_ai($$) {
 sub undo_move($) {
 	my $sock = shift;
 	my $old_ptn = $sock->ptn();
-	print "undoing $old_ptn\n" if $debug_undo;
+	print "undoing $old_ptn\n" if $debug{undo};
 	my @ptn_lines = split(/\n/, $old_ptn);
 	if($ptn_lines[-1] =~ m/^\s*([0-9]+)\.\s+([SFC1-8a-h<>+-]+)\s([FSC1-8a-h><+-]+)?/) {
 		my $turn = $1;
@@ -399,7 +402,7 @@ sub undo_move($) {
 	} else {
 		#no moves, so nothing to undo
 	}
-	print "ended up with " . $sock->ptn() . "\n" if $debug_undo;
+	print "ended up with " . $sock->ptn() . "\n" if $debug{undo};
 }
 
 
@@ -411,7 +414,7 @@ sub add_move($$) {
 	my $last_line = $old_ptn;
 	chomp $last_line;
 	$last_line =~ s/.*\n//s;
-	print "last line: $last_line\n" if $debug_ptn;
+	print "last line: $last_line\n" if $debug{ptn};
 	if($last_line =~ m/^\s*([0-9]+)\.\s+([FSC1-8a-h<>+-]+)\s([FSC1-8a-h><+-]+)?/) {
 		my $turn = $1;
 		my $white_move = $2;
@@ -419,7 +422,7 @@ sub add_move($$) {
 		if(!defined $black_move) {
 			$sock->ptn($old_ptn . $new_move . "\n");
 		} else {
-			print "turn is $turn\n" if $debug_ptn;
+			print "turn is $turn\n" if $debug{ptn};
 			$sock->ptn($old_ptn . ($turn+1) . ".\t$new_move\t");
 		}
 	} else {

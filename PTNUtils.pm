@@ -11,14 +11,14 @@ my @letters = ( '', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h');
 sub letter_add($$) {
 	my $letter = shift;
 	my $count = shift;
-	print "letter_add($letter, $count): $letter_values{$letter}, $letters[$count]\n" if $main::debug_ptn;
+	print "letter_add($letter, $count): $letter_values{$letter}, $letters[$count]\n" if $main::debug{ptn};
 	return $letters[$letter_values{$letter}+$count];
 }
 
 sub letter_sub($$) {
 	my $letter = shift;
 	my $count = shift;
-	print "letter_sub($letter, $count): $letter_values{$letter}, $letters[$count]\n" if $main::debug_ptn;
+	print "letter_sub($letter, $count): $letter_values{$letter}, $letters[$count]\n" if $main::debug{ptn};
 	return $letters[$letter_values{$letter}-$count];
 }
 
@@ -32,7 +32,7 @@ sub ptn_to_playtak($) {
 		} elsif($1 eq 'S') {
 			$ret .= ' W';
 		}
-		print "ptn_to_playtak($ptn) -> $ret\n" if $main::debug_ptn;
+		print "ptn_to_playtak($ptn) -> $ret\n" if $main::debug{ptn};
 		return $ret;
 	} elsif($ptn =~ m/^([1-8]?)([a-h])([1-8])([-+<>])([1-8]*)$/) {
 		#It's a move
@@ -44,7 +44,7 @@ sub ptn_to_playtak($) {
 		if(scalar(@drops) == 0) {
 			$drops[0] = 1;
 		}
-		print "drops is :" . join(", ", @drops) . ":\n" if $main::debug_ptn;
+		print "drops is :" . join(", ", @drops) . ":\n" if $main::debug{ptn};
 		my $ret = 'M '. uc($file) . $row . ' ';
 		if($direction eq '+') {
 			$ret .= uc($file) . ($row + scalar(@drops));
@@ -60,7 +60,7 @@ sub ptn_to_playtak($) {
 		foreach my $drop (@drops) {
 			$ret .= " $drop";
 		}
-		print "ptn_to_playtak($ptn) -> $ret\n" if $main::debug_ptn;
+		print "ptn_to_playtak($ptn) -> $ret\n" if $main::debug{ptn};
 		return $ret;
 	} else {
 		die "unmatched PTN $ptn";
@@ -80,7 +80,7 @@ sub playtak_to_ptn($) {
 		} else {
 			$ret = 'F' . $ret; #Alphatak's torch AI requires the F
 		}
-		print "playtak_to_ptn($playtak) -> $ret\n" if $main::debug_ptn;
+		print "playtak_to_ptn($playtak) -> $ret\n" if $main::debug{ptn};
 		return $ret;
 	} elsif($words[0] eq 'M') {
 		# It's a move
@@ -118,7 +118,7 @@ sub playtak_to_ptn($) {
 			$drop_string .= $drop;
 		}
 		my $ptn = $liftsize . lc($start) . $direction . $drop_string;
-		print "playtak_to_ptn($playtak) -> $ptn\n" if $main::debug_ptn;
+		print "playtak_to_ptn($playtak) -> $ptn\n" if $main::debug{ptn};
 		return $ptn;
 	} else {
 		die "unknown playtak opcode in $playtak";
