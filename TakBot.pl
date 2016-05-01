@@ -48,7 +48,7 @@ my %seek_table;
 
 my @orig_command_line = ($0, @ARGV);
 my $debug;
-my $fork = 1; #not sure it will work w/o forking anymore
+our $fork = 1; #not sure it will work w/o forking anymore
 GetOptions('debug=s' => \$debug,
            'password=s' => \$playtak_passwd,
 	   'fork!' => \$fork,
@@ -413,7 +413,7 @@ sub undo_move($) {
 		my $white_move = $2;
 		my $black_move = $3;
 		if(!defined $black_move) {
-			$sock->ptn(join("\n", @ptn_lines[0 ... $#ptn_lines-1]));
+			$sock->ptn(join("\n", @ptn_lines[0 ... $#ptn_lines-1]) . "\n");
 		} else {
 			$ptn_lines[-1] = $turn . ".\t$white_move\t";
 			$sock->ptn(join("\n", @ptn_lines));
