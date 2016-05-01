@@ -169,10 +169,25 @@ sub dispatch_game($$) {
 	} elsif($line =~ m/^Game#$game_no (Over|Abandoned)/) {
 		$sock->drop_connection($selector);
 	} elsif($line =~ m/^Game#$game_no RequestUndo/) {
-		#send_line($sock, "Game#$game_no RequestUndo\n");
+		$sock->send_line("Game#$game_no RequestUndo\n");
 	} elsif($line =~ m/^Game#$game_no Undo/) {
-		#undo_move($sock);
-		#send_line($sock, "Game#$game_no RequestUndo\n");
+		my $old_state = $sock->waiting();
+		if($old_state eq 'ai' || $old_state eq 'undo') {
+			# if we were thinking, stop and wait for a new
+			# move from the other player.
+			#undo state means we were waiting for them to accept
+			# and undo request we originated for their own move.
+			#Either way, it's now their turn.
+			$sock->waiting('remote');
+		}
+		undo_move($sock);
+		if($old_state eq 'remote') {
+			#we already sent in the move by the time to other
+			# player asked to undo theirs.  So the undo actually
+			# did our move.  So offer to undo theirs too.
+			$sock->send_line("Game#$game_no RequestUndo\n");
+			$sock->waiting('undo');
+		}
 	} elsif($line =~ m/^Game#$game_no OfferDraw/) {
 		#accept all offers for draws
 		$sock->send_line("Game#$game_no OfferDraw\n");
@@ -345,6 +360,7 @@ sub get_move_from_ai($) {
 	my $sock = shift;
 	my $game_no = $sock->name();
 	my $ptn = $sock->ptn();
+	$sock->waiting('ai');
 	my ($reader, $writer) = TakBotSocket->socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC);
 	print "sockets are $sock, $reader, and $writer\n" if $debug{ai};
 	$reader->name("ai_$game_no");
@@ -379,7 +395,10 @@ sub handle_move_from_ai($$) {
 	print "got $move for $game_no from ai\n" if $debug{ai};
 	add_move($sock, $move);
 	$move = ptn_to_playtak($move);
-	$sock->send_line("Game#$game_no $move\n");
+	if($sock->waiting() eq 'ai') {
+		$sock->send_line("Game#$game_no $move\n");
+	} #else, must have been an undo or something.
+	$sock->waiting('remote');
 	$selector->remove($reader);
 	$reader->close();
 }

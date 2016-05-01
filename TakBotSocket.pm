@@ -9,6 +9,7 @@ my %last_times;
 my %ptn_map;
 my %ai_map;
 my %connection_map;
+my %waiting_map;
 
 sub send_line($$) {
 	my $self = shift;
@@ -106,6 +107,15 @@ sub connection($;$) {
 		$connection_map{$self} = $connection;
 	}
 	return $connection_map{$self};
+}
+
+sub waiting($;$) {
+	my $self = shift;
+	my $waiting = shift;
+	if(defined $waiting) {
+		$waiting_map{$self} = $waiting;
+	}
+	return $waiting_map{$self};
 }
 
 sub ai($$) {
