@@ -24,6 +24,14 @@ TakBot will reply in the chat with a list of the AIs that it can use.
 
 If you are currently playing a game and want to change to a different AI, use this command and give the AI name.  For example "TakBot: ai rtak".
 
+## Undo
+
+TakBot will accept any requests to undo a move.  It also assumes that any time a user asks it to undo one of its moves, that's because the user actually wants to take back their previous move.  In such a case, it will immediately issue an undo request after accepting the user's.  If TakBot gets and undo request while it is still thinking about its next move, it will accept that request and abandon the current thinking.
+
+## Draw
+
+TakBot will always accept any offers to draw.
+
 ##Administrative Details
 
 TakBot also responds to a few commands only from the configured owner username.
@@ -44,6 +52,10 @@ This allows TakBot to make some side-comments about the AI engines and games it 
 
 Tells TakBot to stop making those side-comments.
 
+###TakBot: debug
+###TakBot: no debug
+
+Tells TakBot to start and stop logging debug messages of the specified type.  The types currently supported are ai, rtak, torch, ptn, wire, undo.  For example "TakBot: no debug wire".
 
 ##AI Connections
 
