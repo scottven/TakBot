@@ -47,7 +47,7 @@ my $selector = IO::Select->new();
 # map of users to their outstanding "Seeks"
 my %seek_table;
 
-my @orig_command_line = ($0, @ARGV);
+our @orig_command_line = ($0, @ARGV);
 my $debug;
 our $fork = 1; #not sure it will work w/o forking anymore
 GetOptions('debug=s' => \$debug,

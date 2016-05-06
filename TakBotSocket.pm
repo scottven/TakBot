@@ -56,7 +56,9 @@ sub drop_connection($$) {
 	my $self = shift;
 	my $selector = shift;
 	if($self->name() eq 'control') {
-		die "uh oh, dropping the control conneciton";
+		print "uh oh, dropping the control conneciton";
+		sleep 60;
+		exec { $main::orig_command_line[0] }  @main::orig_command_line;
 	}
 	$self->send_line("quit\n");
 	$selector->remove($self);
