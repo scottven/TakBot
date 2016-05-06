@@ -24,7 +24,7 @@ my $playtak_port   = 10000;
 my $user_re = '[a-zA-Z][a-zA-Z0-9_]{3,15}';
 my $owner_name = 'scottven';
 
-my @known_ais = ('rtak', 'george', 'flatimir');
+my @known_ais = ('rtak', 'george', 'flatimir', 'joe');
 my $default_ai = 'rtak';
 my $rtak_ai_base_url = 'http://192.168.100.154:8084/TakService/TakMoveService.svc/GetMove?';
 my $torch_ai_path = '/home/takbot/tak-ai';
@@ -37,6 +37,7 @@ sub parse_control_shout($$$);
 sub parse_game_shout($$$);
 sub get_move_from_ai($);
 sub handle_move_from_ai($$);
+sub handle_joe_move($$);
 sub undo_move($);
 sub add_move($$);
 
@@ -72,12 +73,16 @@ if(defined $debug && ($debug =~ m/ai/  || $debug eq 'all' || $debug eq '1')) {
 	$debug{ai} = 1;
 	$debug{torch} = 1;
 	$debug{rtak} = 1;
+	$debug{joe} = 1;
 }
 if(defined $debug && ($debug =~ m/torch/)) {
 	$debug{torch} = 1;
 }
 if(defined $debug && ($debug =~ m/rtak/)) {
-	$debug{torch} = 1;
+	$debug{rtak} = 1;
+}
+if(defined $debug && ($debug =~ m/joe/)) {
+	$debug{joe} = 1;
 }
 open_connection('control');
 
@@ -102,13 +107,17 @@ while(1) {
 			dispatch_control($command, $sock);
 		} elsif($name =~ m/ai_/) {
 			handle_move_from_ai($command, $sock);
+		} elsif($name =~ m/joe_/) {
+			#we want to read these atomicly
+			$selector->remove($sock);
+			handle_joe_move($command, $sock);
 		} else {
 			dispatch_game($command, $sock);
 		}
 	}
 	my $now = time();
 	foreach my $sock ($selector->handles()) {
-		next if $sock->name() =~ m/ai_/; #don't ping the AI socket
+		next if $sock->name() =~ m/(ai|joe)_/; #don't ping the AI sockets
 		if($now - $sock->last_time() >= 30) {
 			$sock->send_line("PING\n");
 		}
@@ -317,10 +326,38 @@ sub open_connection($;$$) {
 	return $sock;
 }
 
-sub get_move_from_rtak($$) {
+sub get_move_from_joe($$) {
 	my $ptn = shift;
 	my $writer = shift;
+	$writer->name('main joe writer');
+	print "Getting move from Joe. writer is $writer\n" if $debug{joe};
+	my ($th_reader, $th_writer) = TakBotSocket->socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC);
+	$th_reader->name("joe_th");
+	$th_reader->blocking(undef);
+	$th_reader->connection($writer);
+	$th_writer->name("joe_th_writer");
+	my ($rtak_reader, $rtak_writer) = TakBotSocket->socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC);
+	$rtak_reader->name("joe_rtak");
+	$rtak_reader->blocking(undef);
+	$rtak_reader->connection($writer);
+	$rtak_writer->name("joe_rtak_writer");
+	print "kicking off rtak\n" if $debug{joe};
+	threads->create(\&get_move_from_rtak, $ptn, $rtak_writer, 'all')->detach();
+	print "done...  kicking off george\n" if $debug{joe};
+	threads->create(\&get_move_from_torch_ai, 'george', $ptn, $th_writer, 'all')->detach();
+	print "done\n" if $debug{joe};
+	$selector->add($th_reader);
+	$selector->add($rtak_reader);
+}
+
+sub get_move_from_rtak($$;$) {
+	my $ptn = shift;
+	my $writer = shift;
+	my $all = shift;
 	my $query = $rtak_ai_base_url . "code=" . uri_escape($ptn);
+	if(defined $all && $all eq 'all') {
+		$query =~ s/GetMove/GetAllMoves/;
+	}
 	print "Query: $query\n" if $debug{rtak};
 	my $ret = get($query);
 	if(!defined $ret) {
@@ -328,17 +365,26 @@ sub get_move_from_rtak($$) {
 	}
 	print "Returned $ret\n" if $debug{rtak};
 	my $move = decode_json($ret)->{d};
+	if(defined $all && $all eq 'all') {
+		$move = encode_json($move);
+	}
 	print "Move is $move\n" if $debug{rtak};
 	$writer->send_line("$move\n");
 	$writer->close();
 }
 
-sub get_move_from_torch_ai($$$) {
+sub get_move_from_torch_ai($$$;$) {
 	my $ai_name = shift;
 	my $ptn = shift;
 	my $writer = shift;
+	my $all = shift;
+	if(defined $all && $all eq 'all') {
+		$all = '_all';
+	} else {
+		$all = '';
+	}
 	chdir $torch_ai_path;
-	my $script = $torch_ai_path . "/takbot_${ai_name}.lua";
+	my $script = $torch_ai_path . "/takbot_${ai_name}${all}.lua";
 	print "calling $script with th\n" if $debug{torch};
 	my ($ai_reader, $ai_writer);
 	my $ai_pid = open2($ai_reader, $ai_writer, "th $script");
@@ -346,13 +392,25 @@ sub get_move_from_torch_ai($$$) {
 	close $ai_writer;
 	my @ai_return = <$ai_reader>;
 	print "AI returned: @ai_return" if $debug{torch};
-	my $move = $ai_return[-2];
-	print "move line is $move" if $debug{torch};
-	chomp $move;
-	$move =~ s/.*move: ([^,]+),.*$/$1/;
-	$move = ucfirst $move;
-	print "Move finally is $move\n" if $debug{torch};
-	$writer->send_line("$move\n");
+	if($all eq '') {
+		my $move = $ai_return[-2];
+		print "move line is $move" if $debug{torch};
+		chomp $move;
+		$move =~ s/.*move: ([^,]+),.*$/$1/;
+		$move = ucfirst $move;
+		print "Move finally is $move\n" if $debug{torch};
+		$writer->send_line("$move\n");
+	} else {
+		while(my $line = shift @ai_return) {
+			print "skipping $line" if $debug{torch};
+			last if $line =~ m/moves follow/;
+		}
+		chomp @ai_return;
+		foreach my $line (@ai_return) {
+			$line = [ split(/\s+/, $line) ];
+		}
+		$writer->send_line(encode_json(\@ai_return) . "\n");
+	}
 	$writer->close();
 }
 
@@ -362,19 +420,18 @@ sub get_move_from_ai($) {
 	my $ptn = $sock->ptn();
 	$sock->waiting('ai');
 	my ($reader, $writer) = TakBotSocket->socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC);
-	print "sockets are $sock, $reader, and $writer\n" if $debug{ai};
 	$reader->name("ai_$game_no");
 	$reader->blocking(undef);
 	$reader->connection($sock);
-	my $thr;
 	if($sock->ai() eq 'rtak') {
-		$thr = threads->create(\&get_move_from_rtak, $ptn, $writer);
+		threads->create(\&get_move_from_rtak, $ptn, $writer)->detach();
 	} elsif($sock->ai() eq 'george') {
-		$thr = threads->create(\&get_move_from_torch_ai, 'george', $ptn, $writer);
+		threads->create(\&get_move_from_torch_ai, 'george', $ptn, $writer)->detach();
 	} elsif($sock->ai() eq 'flatimir') {
-		$thr = threads->create(\&get_move_from_torch_ai, 'flatimir', $ptn, $writer);
+		threads->create(\&get_move_from_torch_ai, 'flatimir', $ptn, $writer)->detach();
+	} elsif($sock->ai() eq 'joe') {
+		get_move_from_joe($ptn, $writer);
 	}
-	$thr->detach();
 	$selector->add($reader);
 	print "$game_no AI request queued.\n" if $debug{ai};
 }
@@ -401,6 +458,82 @@ sub handle_move_from_ai($$) {
 	$sock->waiting('remote');
 	$selector->remove($reader);
 	$reader->close();
+}
+
+sub handle_joe_move($$) {
+	my $first_line = shift;
+	my $sock = shift;
+	my %new_moves;
+	my $name = $sock->name();
+	print "handling $name move\n" if $debug{joe};
+	if($name =~ m/joe_rtak/) {
+		print "JSON: $first_line\n" if $debug{joe};
+		my @moves = @{decode_json($first_line)};
+		foreach my $pair (@moves) {
+			my ($move, $score) = @$pair;
+			#we need to fully specify the move so it will match torch
+			if($move =~ m/[+><-]/) {
+				#moving a stack
+				$move =~ m/([1-8]?)([a-h][1-8][+><-])([1-8]*)/;
+				my $count = $1;
+				my $square_dir = $2;
+				my $drops = $3;
+				if(!defined $count || $count eq '') {
+					$count = '1';
+				}
+				if(!defined $drops || $drops eq '') {
+					$drops = $count;
+				}
+				$move = $count . $square_dir . $drops;
+			} else {
+				#placing a stone
+				$move =~ m/([FCSfcs]?)([a-h][1-8])/;
+				my $stone = $1;
+				my $square = $2;
+				if(!defined $stone || $stone eq '') {
+					$stone = 'F';
+				}
+				$move = uc($stone) . $square;
+			}
+			# also need to shift the scores to be positive
+			print "Got " . join(",", @$pair) . ", stored $move, $score + 10000\n" if $debug{joe};
+			$new_moves{$move} = $score + 10000;
+		}
+	} elsif($name =~ m/joe_th/) {
+		my @moves = @{decode_json($first_line)};
+		foreach my $pair (@moves) {
+			my ($move, $score) = @$pair;
+			#only change needed is to upcase the stone type for places
+			$move =~ s/^([fcs])/uc $1/e;
+			$new_moves{$move} = $score;
+			print "Got $move $score, stored $move, $score\n" if $debug{joe};
+		}
+	}
+	my $parent = $sock->connection();
+	my $old_moves = $parent->moves();
+	if(!defined $old_moves) {
+		$parent->moves(\%new_moves);
+		return undef;
+	}
+	my ($best_move, $best_score) = ('', -1);
+	foreach my $move (keys %$old_moves) {
+		my $old_score = $old_moves->{$move};
+		my $new_score = $new_moves{$move};
+		die("missing new score for $move") if !defined $new_score;
+		my $composite_score = $old_score * $new_score;
+		if($composite_score > $best_score) {
+			print "Best move was $best_move, $best_score; but now is $move, $composite_score\n" if $debug{joe};
+			$best_move = $move;
+			$best_score = $composite_score;
+		}
+		delete $new_moves{$move};
+	}
+	# %new_moves should be empty now.
+	if(keys %new_moves) {
+		die("missing old score for " . join(' ', keys %new_moves));
+	}
+	print "returning $best_move\n" if $debug{joe};
+	$parent->send_line("$best_move\n");
 }
 
 sub undo_move($) {
