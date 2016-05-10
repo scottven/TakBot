@@ -41,8 +41,11 @@ sub ptn_to_playtak($) {
 		my $row = $3;
 		my $direction = $4;
 		my @drops = split(//, $5);
+		if($num_lifted eq '') {
+			$num_lifted = 1;
+		}
 		if(scalar(@drops) == 0) {
-			$drops[0] = 1;
+			$drops[0] = $num_lifted;
 		}
 		print "drops is :" . join(", ", @drops) . ":\n" if $main::debug{ptn};
 		my $ret = 'M '. uc($file) . $row . ' ';
