@@ -21,16 +21,17 @@ my $playtak_passwd = "";
 my $playtak_user   = "TakBot";
 my $playtak_host   = "playtak.com";
 my $playtak_port   = 10000;
-my $user_re = '[a-zA-Z][a-zA-Z0-9_]{3,15}';
+my $user_re = '[a-zA-Z][a-zA-Z0-9_]{2,15}';
 my $owner_name = 'scottven';
 
 my @known_ais = ('rtak', 'george', 'flatimir', 'joe');
 my $default_ai = 'rtak';
-my $rtak_ai_base_url = 'http://192.168.100.154:8084/TakService/TakMoveService.svc/GetMove?';
+my $default_ai_depth = 4;
+my $rtak_ai_base_url = 'http://192.168.100.154:8084/TakServiceMerge/TakMoveService.svc/GetMove?';
 my $torch_ai_path = '/home/takbot/tak-ai';
 my $color_enabled = 0;
 
-sub open_connection($;$$);
+sub open_connection($;$$$);
 sub dispatch_control($$);
 sub dispatch_game($$);
 sub parse_control_shout($$$);
@@ -278,11 +279,11 @@ sub parse_control_shout($$$) {
 		$sock->send_line("Shout Goodbye.\n");
 		$sock->send_line("quit\n");
 		exit(0);
-	} elsif($line =~ m/^TakBot:?\s*play\s*($ai_name_re)?/oi) {
+	} elsif($line =~ m/^TakBot:?\s*play\s*($ai_name_re)?\s*([0-9])?/oi) {
 		#$sock->send_line("Shout Hi, $user!  I'm looking for your game now\n");
 		if(exists $seek_table{$user}) {
 			$sock->send_line("Shout $user: OK, joining your game.\n");
-			open_connection($seek_table{$user}, $sock, $1);
+			open_connection($seek_table{$user}, $sock, $1, $2);
 		} else {
 			$sock->send_line("Shout $user: Sorry, I don't see a game to join from you.  Please create a game first.\n");
 		}
@@ -294,10 +295,11 @@ sub parse_control_shout($$$) {
 }
 
 
-sub open_connection($;$$) {
+sub open_connection($;$$$) {
 	my $name = shift;
 	my $control_sock = shift;
 	my $ai_selection = shift;
+	my $ai_depth = shift;
 
 	if($fork && $name ne 'control') {
 		my $pid = fork();
@@ -321,6 +323,11 @@ sub open_connection($;$$) {
 		$sock->ai($ai_selection);
 	} else {
 		$sock->ai($default_ai);
+	}
+	if(defined $ai_depth) {
+		$sock->depth($ai_depth);
+	} else {
+		$sock->depth($default_ai_depth);
 	}
 	$selector->add($sock);
 	return $sock;
@@ -365,6 +372,10 @@ sub get_move_from_rtak($$;$) {
 	}
 	print "Returned $ret\n" if $debug{rtak};
 	my $move = decode_json($ret)->{d};
+	if($move =~ m/Illegal/) {
+		print $move;
+		print $ptn . "\n";
+	}
 	if(defined $all && $all eq 'all') {
 		$move = encode_json($move);
 	}
@@ -373,9 +384,10 @@ sub get_move_from_rtak($$;$) {
 	$writer->close();
 }
 
-sub get_move_from_torch_ai($$$;$) {
+sub get_move_from_torch_ai($$$$;$) {
 	my $ai_name = shift;
 	my $ptn = shift;
+	my $depth = shift;
 	my $writer = shift;
 	my $all = shift;
 	if(defined $all && $all eq 'all') {
@@ -387,13 +399,13 @@ sub get_move_from_torch_ai($$$;$) {
 	my $script = $torch_ai_path . "/takbot_${ai_name}${all}.lua";
 	print "calling $script with th\n" if $debug{torch};
 	my ($ai_reader, $ai_writer);
-	my $ai_pid = open2($ai_reader, $ai_writer, "th $script");
+	my $ai_pid = open2($ai_reader, $ai_writer, "th $script $depth");
 	print $ai_writer $ptn;
 	close $ai_writer;
 	my @ai_return = <$ai_reader>;
 	print "AI returned: @ai_return" if $debug{torch};
 	if($all eq '') {
-		my $move = $ai_return[-2];
+		my $move = $ai_return[-3];
 		print "move line is $move" if $debug{torch};
 		chomp $move;
 		$move =~ s/.*move: ([^,]+),.*$/$1/;
@@ -418,6 +430,7 @@ sub get_move_from_ai($) {
 	my $sock = shift;
 	my $game_no = $sock->name();
 	my $ptn = $sock->ptn();
+	my $depth = $sock->depth();
 	$sock->waiting('ai');
 	my ($reader, $writer) = TakBotSocket->socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC);
 	$reader->name("ai_$game_no");
@@ -426,9 +439,9 @@ sub get_move_from_ai($) {
 	if($sock->ai() eq 'rtak') {
 		threads->create(\&get_move_from_rtak, $ptn, $writer)->detach();
 	} elsif($sock->ai() eq 'george') {
-		threads->create(\&get_move_from_torch_ai, 'george', $ptn, $writer)->detach();
+		threads->create(\&get_move_from_torch_ai, 'george', $ptn, $depth, $writer)->detach();
 	} elsif($sock->ai() eq 'flatimir') {
-		threads->create(\&get_move_from_torch_ai, 'flatimir', $ptn, $writer)->detach();
+		threads->create(\&get_move_from_torch_ai, 'flatimir', $ptn, $depth, $writer)->detach();
 	} elsif($sock->ai() eq 'joe') {
 		get_move_from_joe($ptn, $writer);
 	}

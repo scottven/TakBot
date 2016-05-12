@@ -11,6 +11,7 @@ my %ai_map;
 my %connection_map;
 my %waiting_map;
 my %moves_map;
+my %depth_map;
 
 sub send_line($$) {
 	my $self = shift;
@@ -130,6 +131,15 @@ sub moves($;$) {
 		$moves_map{$self} = $moves;
 	}
 	return $moves_map{$self};
+}
+
+sub depth($;$) {
+	my $self = shift;
+	my $depth = shift;
+	if(defined $depth) {
+		$depth_map{$self} = $depth;
+	}
+	return $depth_map{$self};
 }
 
 sub ai($$) {
